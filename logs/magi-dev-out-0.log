@@ -10252,3 +10252,31 @@
 2025-09-29T21:40:37:  ✓ Compiled middleware in 168ms
 2025-09-29T21:40:38: ℹ️  Instrumentation register called - skipping OTel init (Edge Runtime or disabled)
 2025-09-29T21:40:38:  ✓ Ready in 931ms
+2025-09-29T21:54:05: [?25h
+2025-09-29T21:54:05: 
+2025-09-29T21:54:05: 
+2025-09-29T21:54:05: > magi-app@0.1.0 dev
+2025-09-29T21:54:05: > next dev --turbopack
+2025-09-29T21:54:05: 
+2025-09-29T21:54:06:    ▲ Next.js 15.5.4 (Turbopack)
+2025-09-29T21:54:06:    - Local:        http://localhost:3001
+2025-09-29T21:54:06:    - Network:      http://10.0.0.193:3001
+2025-09-29T21:54:06:    - Environments: .env.local, .env
+2025-09-29T21:54:06: 
+2025-09-29T21:54:06:  ✓ Starting...
+2025-09-29T21:54:06:  ✓ Compiled instrumentation Node.js in 13ms
+2025-09-29T21:54:06:  ✓ Compiled instrumentation Edge in 11ms
+2025-09-29T21:54:06:  ✓ Compiled middleware in 156ms
+2025-09-29T21:54:07: ℹ️  Instrumentation register called - skipping OTel init (Edge Runtime or disabled)
+2025-09-29T21:54:07:  ✓ Ready in 948ms
+2025-09-29T22:24:13:    ▲ Next.js 15.5.4 (Turbopack)
+2025-09-29T22:24:13:    - Local:        http://localhost:3001
+2025-09-29T22:24:13:    - Network:      http://10.0.0.193:3001
+2025-09-29T22:24:13:    - Environments: .env.local, .env
+2025-09-29T22:24:13: 
+2025-09-29T22:24:13:  ✓ Starting...
+2025-09-29T22:24:13:  ✓ Compiled instrumentation Node.js in 15ms
+2025-09-29T22:24:13:  ✓ Compiled instrumentation Edge in 14ms
+2025-09-29T22:24:14:  ✓ Compiled middleware in 245ms
+2025-09-29T22:24:14: ℹ️  Instrumentation register called - skipping OTel init (Edge Runtime or disabled)
+2025-09-29T22:24:14:  ✓ Ready in 1133ms

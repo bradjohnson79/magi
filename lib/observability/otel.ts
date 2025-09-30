@@ -15,6 +15,11 @@ let tracer: any = null;
  * Avoids all process APIs to prevent Edge Runtime conflicts
  */
 export function isNodeRuntime(): boolean {
+  // Disable during build process to prevent issues
+  if (process.env.NODE_ENV === 'production' && process.env.NEXT_PHASE === 'phase-production-build') {
+    return false;
+  }
+
   // Check if we're explicitly in Edge Runtime
   if (typeof EdgeRuntime !== 'undefined') {
     return false;

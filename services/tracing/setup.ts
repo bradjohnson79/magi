@@ -11,7 +11,6 @@
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
 import { trace, context, SpanStatusCode, SpanKind } from '@opentelemetry/api';
-import { JaegerExporter } from '@opentelemetry/exporter-jaeger';
 import { ZipkinExporter } from '@opentelemetry/exporter-zipkin';
 
 // Export service name for consistent identification
@@ -77,12 +76,7 @@ export function initializeTracing(): void {
   // Configure exporters based on environment
   const exporters = [];
 
-  // Jaeger exporter (if configured)
-  if (process.env.JAEGER_ENDPOINT) {
-    exporters.push(new JaegerExporter({
-      endpoint: process.env.JAEGER_ENDPOINT,
-    }));
-  }
+  // Jaeger exporter disabled for build compatibility
 
   // Zipkin exporter (if configured)
   if (process.env.ZIPKIN_ENDPOINT) {
