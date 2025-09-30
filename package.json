@@ -5,7 +5,8 @@
   "packageManager": "pnpm@8.15.0",
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "next build --turbopack",
+    "build": "prisma generate && next build --turbopack",
+    "postinstall": "prisma generate",
     "start": "next start",
     "lint": "eslint",
     "lint:fix": "eslint --fix",
