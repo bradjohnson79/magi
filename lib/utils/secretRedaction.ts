@@ -3,6 +3,18 @@
  * Ensures sensitive information is never logged or persisted
  */
 
+import type { JsonObject, JsonValue } from '@/lib/types/security'
+
+// Type guards
+function isPlainObject(v: unknown): v is JsonObject {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null
+}
+
+
 // Common secret patterns
 const SECRET_PATTERNS = [
   // API Keys
@@ -77,28 +89,28 @@ export function redactSecrets(input: string): string {
 /**
  * Redact secrets from an object recursively
  */
-export function redactSecretsFromObject(obj: any): any {
+export function redactSecretsFromObject(obj: unknown): JsonValue {
   if (obj === null || obj === undefined) {
-    return obj;
+    return obj
   }
 
   if (typeof obj === 'string') {
-    return redactSecrets(obj);
+    return redactSecrets(obj)
   }
 
   if (typeof obj === 'number' || typeof obj === 'boolean') {
-    return obj;
+    return obj
   }
 
   if (Array.isArray(obj)) {
-    return obj.map(item => redactSecretsFromObject(item));
+    return obj.map(item => redactSecretsFromObject(item))
   }
 
-  if (typeof obj === 'object') {
-    const redacted: any = {};
+  if (isRecord(obj)) {
+    const redacted: JsonObject = {}
 
     for (const [key, value] of Object.entries(obj)) {
-      const keyLower = key.toLowerCase();
+      const keyLower = key.toLowerCase()
 
       // Check if key name suggests it contains secrets
       const isSecretKey = SECRET_ENV_VARS.has(key.toUpperCase()) ||
@@ -107,19 +119,19 @@ export function redactSecretsFromObject(obj: any): any {
                          keyLower.includes('token') ||
                          keyLower.includes('key') ||
                          keyLower.includes('auth') ||
-                         keyLower.includes('credential');
+                         keyLower.includes('credential')
 
       if (isSecretKey && typeof value === 'string') {
-        redacted[key] = '[REDACTED]';
+        redacted[key] = '[REDACTED]'
       } else {
-        redacted[key] = redactSecretsFromObject(value);
+        redacted[key] = redactSecretsFromObject(value)
       }
     }
 
-    return redacted;
+    return redacted
   }
 
-  return obj;
+  return '[REDACTED]'
 }
 
 /**
@@ -142,41 +154,48 @@ export function redactEnvVars(env: Record<string, string | undefined>): Record<s
 /**
  * Safe JSON stringify that redacts secrets
  */
-export function safeStringify(obj: any, space?: number): string {
+export function safeStringify(obj: unknown, space?: number): string {
   try {
-    const redacted = redactSecretsFromObject(obj);
-    return JSON.stringify(redacted, null, space);
-  } catch (error) {
-    return JSON.stringify({ error: 'Failed to serialize object', type: typeof obj }, null, space);
+    const redacted = redactSecretsFromObject(obj)
+    return JSON.stringify(redacted, null, space)
+  } catch {
+    return JSON.stringify({ error: 'Failed to serialize object', type: typeof obj }, null, space)
   }
 }
 
 /**
  * Redact secrets from model run payload
  */
-export function redactModelRunPayload(payload: any): any {
-  if (!payload) return payload;
+export function redactModelRunPayload(payload: unknown): JsonValue {
+  if (!payload) return payload as JsonValue
 
   // Deep clone and redact
-  const redacted = redactSecretsFromObject(payload);
+  const redacted = redactSecretsFromObject(payload)
 
-  // Additional AI-specific redactions
-  if (redacted.prompt && typeof redacted.prompt === 'string') {
-    redacted.prompt = redactSecrets(redacted.prompt);
+  if (isPlainObject(redacted)) {
+    // Additional AI-specific redactions
+    if (redacted.prompt && typeof redacted.prompt === 'string') {
+      redacted.prompt = redactSecrets(redacted.prompt)
+    }
+
+    if (redacted.messages && Array.isArray(redacted.messages)) {
+      redacted.messages = redacted.messages.map((msg: unknown) => {
+        if (isRecord(msg)) {
+          return {
+            ...msg,
+            content: typeof msg.content === 'string' ? redactSecrets(msg.content) : msg.content,
+          }
+        }
+        return msg
+      })
+    }
+
+    if (redacted.context && isRecord(redacted.context)) {
+      redacted.context = redactSecretsFromObject(redacted.context)
+    }
   }
 
-  if (redacted.messages && Array.isArray(redacted.messages)) {
-    redacted.messages = redacted.messages.map((msg: any) => ({
-      ...msg,
-      content: typeof msg.content === 'string' ? redactSecrets(msg.content) : msg.content,
-    }));
-  }
-
-  if (redacted.context && typeof redacted.context === 'object') {
-    redacted.context = redactSecretsFromObject(redacted.context);
-  }
-
-  return redacted;
+  return redacted
 }
 
 /**

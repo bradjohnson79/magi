@@ -6,6 +6,7 @@
  */
 
 import crypto from 'crypto'
+import type { EncryptInput, JsonValue } from '@/lib/types/security'
 
 // Get encryption key from environment or generate a default one
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY ||
@@ -146,7 +147,7 @@ export function maskSensitiveData(value: string, showChars: number = 4): string 
 /**
  * Encrypt an object as JSON
  */
-export function encryptObject(obj: any): string {
+export function encryptObject(obj: EncryptInput): string {
   const json = JSON.stringify(obj)
   return encrypt(json)
 }
@@ -154,9 +155,13 @@ export function encryptObject(obj: any): string {
 /**
  * Decrypt JSON to an object
  */
-export function decryptObject<T = any>(encryptedData: string): T {
+export function decryptObject<T = JsonValue>(encryptedData: string): T {
   const json = decrypt(encryptedData)
-  return JSON.parse(json) as T
+  try {
+    return JSON.parse(json) as T
+  } catch {
+    return json as unknown as T
+  }
 }
 
 /**
@@ -204,7 +209,7 @@ export function generateOTP(length: number = 6): string {
 /**
  * Encrypt field-level data for database storage
  */
-export function encryptField(fieldName: string, value: any): string {
+export function encryptField(fieldName: string, value: JsonValue): string {
   const data = {
     field: fieldName,
     value: value,
@@ -216,6 +221,16 @@ export function encryptField(fieldName: string, value: any): string {
 /**
  * Decrypt field-level data from database
  */
-export function decryptField<T = any>(encryptedData: string): { field: string; value: T; timestamp: number } {
+export function decryptField<T = JsonValue>(encryptedData: string): { field: string; value: T; timestamp: number } {
   return decryptObject(encryptedData)
+}
+
+/**
+ * Mask for logs without leaking secrets
+ */
+export function maskForLogs(input: string, unmaskedPrefix = 0): string {
+  if (!input) return ""
+  if (unmaskedPrefix <= 0) return "********"
+  const prefix = input.slice(0, unmaskedPrefix)
+  return `${prefix}${"*".repeat(Math.max(0, input.length - unmaskedPrefix))}`
 }
