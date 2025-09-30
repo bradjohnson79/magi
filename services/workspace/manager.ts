@@ -6,7 +6,7 @@
  */
 
 import { prisma } from '@/lib/prisma';
-import { withSpan, addSpanAttributes, SPAN_ATTRIBUTES } from '@/services/tracing/setup';
+import { withSpan, addSpanAttributes } from '@/lib/observability/otel';
 import { auditLogger } from '@/services/audit/logger';
 import { nanoid } from 'nanoid';
 
