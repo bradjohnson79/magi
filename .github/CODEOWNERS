@@ -1,0 +1,24 @@
+# Global owners
+* @magi-dev-team
+
+# Core architecture and infrastructure
+/prisma/ @magi-architects @magi-dev-team
+/lib/db/ @magi-architects @magi-dev-team
+/.github/workflows/ @magi-devops @magi-dev-team
+/vercel.json @magi-devops @magi-dev-team
+
+# Guardrails and architecture docs
+/guardrails/ @magi-architects
+/ARCHITECTURE.md @magi-architects
+/README.md @magi-dev-team
+
+# API routes
+/app/api/ @magi-backend-team @magi-dev-team
+
+# Frontend components
+/components/ @magi-frontend-team @magi-dev-team
+/app/dashboard/ @magi-frontend-team @magi-dev-team
+
+# AI and services
+/services/ @magi-ai-team @magi-dev-team
+/lib/ai-matrix/ @magi-ai-team @magi-dev-team

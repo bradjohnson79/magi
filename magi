@@ -1,0 +1,54 @@
+#!/bin/bash
+
+# Magi Dev Server Control Script
+# Place this in your PATH for easy access from anywhere
+
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+case "$1" in
+    start)
+        echo -e "${GREEN}🚀 Starting Magi dev server...${NC}"
+        cd /Users/bradjohnson/Documents/MAGI-online/magi-app
+        pm2 start ecosystem.config.js
+        echo -e "${GREEN}✓ Server running at http://localhost:3001${NC}"
+        ;;
+
+    stop)
+        echo -e "${YELLOW}⏹ Stopping Magi dev server...${NC}"
+        pm2 stop magi-dev
+        ;;
+
+    restart)
+        echo -e "${YELLOW}🔄 Restarting Magi dev server...${NC}"
+        pm2 restart magi-dev
+        ;;
+
+    status)
+        pm2 status magi-dev
+        ;;
+
+    logs)
+        pm2 logs magi-dev --lines 50
+        ;;
+
+    open)
+        echo -e "${BLUE}🌐 Opening Magi in browser...${NC}"
+        open http://localhost:3001
+        ;;
+
+    *)
+        echo "Magi Dev Server Control"
+        echo ""
+        echo "Usage: magi {start|stop|restart|status|logs|open}"
+        echo ""
+        echo "  start   - Start the dev server"
+        echo "  stop    - Stop the dev server"
+        echo "  restart - Restart the dev server"
+        echo "  status  - Check server status"
+        echo "  logs    - View recent logs"
+        echo "  open    - Open in browser"
+        ;;
+esac

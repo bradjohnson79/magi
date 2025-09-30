@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.magi.devserver</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/pm2</string>
+        <string>start</string>
+        <string>/Users/bradjohnson/Documents/MAGI-online/magi-app/ecosystem.config.js</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/bradjohnson/Documents/MAGI-online/magi-app</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/bradjohnson/Documents/MAGI-online/magi-app/logs/launchagent.err</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/bradjohnson/Documents/MAGI-online/magi-app/logs/launchagent.out</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

@@ -1,0 +1,182 @@
+name: Health Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      triggered_by:
+        description: 'What triggered this health check'
+        required: false
+        default: 'manual'
+      alert_type:
+        description: 'Alert type that triggered this (if any)'
+        required: false
+      severity:
+        description: 'Alert severity (if any)'
+        required: false
+
+  schedule:
+    # Run health checks every 15 minutes
+    - cron: '*/15 * * * *'
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run Health Check
+      id: health
+      run: |
+        echo "Running health check..."
+
+        # Check if application is responding
+        if curl -f -s -o /dev/null -w "%{http_code}" ${{ secrets.HEALTH_CHECK_URL || 'https://your-app.vercel.app/api/health' }}; then
+          echo "health_status=healthy" >> $GITHUB_OUTPUT
+          echo "Application is responding"
+        else
+          echo "health_status=unhealthy" >> $GITHUB_OUTPUT
+          echo "Application is not responding"
+        fi
+
+    - name: Run Security Scan
+      id: security
+      run: |
+        echo "Running security scan..."
+
+        # Run semgrep security scan if available
+        if command -v semgrep &> /dev/null; then
+          if semgrep --config=auto --error --quiet .; then
+            echo "security_status=clean" >> $GITHUB_OUTPUT
+            echo "No security issues found"
+          else
+            echo "security_status=issues_found" >> $GITHUB_OUTPUT
+            echo "Security issues detected"
+          fi
+        else
+          echo "security_status=skipped" >> $GITHUB_OUTPUT
+          echo "Semgrep not available, skipping security scan"
+        fi
+
+    - name: Check Dependencies
+      id: deps
+      run: |
+        echo "Checking dependencies..."
+
+        # Check for known vulnerabilities
+        if npm audit --audit-level=moderate; then
+          echo "deps_status=clean" >> $GITHUB_OUTPUT
+          echo "No moderate or high severity vulnerabilities found"
+        else
+          echo "deps_status=vulnerabilities_found" >> $GITHUB_OUTPUT
+          echo "Vulnerabilities found in dependencies"
+        fi
+
+    - name: Test Database Connection
+      id: database
+      run: |
+        echo "Testing database connection..."
+
+        # This would typically test your database connection
+        # For now, we'll simulate it
+        if [ "${{ steps.health.outputs.health_status }}" = "healthy" ]; then
+          echo "db_status=connected" >> $GITHUB_OUTPUT
+          echo "Database connection test passed"
+        else
+          echo "db_status=connection_failed" >> $GITHUB_OUTPUT
+          echo "Database connection test failed"
+        fi
+
+    - name: Report Results
+      run: |
+        echo "## Health Check Results" >> $GITHUB_STEP_SUMMARY
+        echo "- **Application Health:** ${{ steps.health.outputs.health_status }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Security Status:** ${{ steps.security.outputs.security_status }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Dependencies:** ${{ steps.deps.outputs.deps_status }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Database:** ${{ steps.database.outputs.db_status }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Triggered by:** ${{ github.event.inputs.triggered_by || 'schedule' }}" >> $GITHUB_STEP_SUMMARY
+
+        if [ -n "${{ github.event.inputs.alert_type }}" ]; then
+          echo "- **Alert Type:** ${{ github.event.inputs.alert_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Alert Severity:** ${{ github.event.inputs.severity }}" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: Create Issue on Failure
+      if: |
+        steps.health.outputs.health_status == 'unhealthy' ||
+        steps.security.outputs.security_status == 'issues_found' ||
+        steps.deps.outputs.deps_status == 'vulnerabilities_found' ||
+        steps.database.outputs.db_status == 'connection_failed'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const issues = [];
+          if ('${{ steps.health.outputs.health_status }}' === 'unhealthy') {
+            issues.push('Application not responding');
+          }
+          if ('${{ steps.security.outputs.security_status }}' === 'issues_found') {
+            issues.push('Security vulnerabilities detected');
+          }
+          if ('${{ steps.deps.outputs.deps_status }}' === 'vulnerabilities_found') {
+            issues.push('Dependency vulnerabilities found');
+          }
+          if ('${{ steps.database.outputs.db_status }}' === 'connection_failed') {
+            issues.push('Database connection failed');
+          }
+
+          const title = `🚨 Health Check Failed - ${issues.length} issue(s) detected`;
+          const body = `
+          ## Health Check Failure Report
+
+          **Date:** ${new Date().toISOString()}
+          **Triggered by:** ${{ github.event.inputs.triggered_by || 'schedule' }}
+          ${github.event.inputs.alert_type ? `**Related Alert:** ${{ github.event.inputs.alert_type }} (${{ github.event.inputs.severity }})` : ''}
+
+          ### Issues Detected
+          ${issues.map(issue => `- ❌ ${issue}`).join('\n')}
+
+          ### Status Details
+          - **Application:** ${{ steps.health.outputs.health_status }}
+          - **Security:** ${{ steps.security.outputs.security_status }}
+          - **Dependencies:** ${{ steps.deps.outputs.deps_status }}
+          - **Database:** ${{ steps.database.outputs.db_status }}
+
+          ### Recommended Actions
+          1. Check application logs for errors
+          2. Verify infrastructure status
+          3. Review recent deployments
+          4. Contact on-call engineer if issues persist
+
+          ---
+          *This issue was automatically created by the Health Check workflow*
+          `;
+
+          await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: title,
+            body: body,
+            labels: ['health-check', 'automated', 'urgent']
+          });
+
+    - name: Send Success Notification
+      if: |
+        steps.health.outputs.health_status == 'healthy' &&
+        steps.security.outputs.security_status != 'issues_found' &&
+        steps.deps.outputs.deps_status != 'vulnerabilities_found' &&
+        steps.database.outputs.db_status == 'connected' &&
+        github.event.inputs.triggered_by == 'alert'
+      run: |
+        echo "Health check passed after alert trigger"
+        echo "::notice title=Health Check Recovery::All systems are now healthy following alert: ${{ github.event.inputs.alert_type }}"

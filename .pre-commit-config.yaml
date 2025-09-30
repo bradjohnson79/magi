@@ -1,0 +1,194 @@
+# Pre-commit hooks for Magi platform
+# Install with: pip install pre-commit && pre-commit install
+
+repos:
+  # Basic file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: detect-private-key
+      - id: check-case-conflict
+      - id: mixed-line-ending
+
+  # ESLint for JavaScript/TypeScript
+  - repo: local
+    hooks:
+      - id: eslint
+        name: ESLint
+        entry: pnpm exec eslint
+        language: system
+        files: \.(js|jsx|ts|tsx)$
+        args: [--fix, --max-warnings=0]
+
+  # Prettier for code formatting
+  - repo: local
+    hooks:
+      - id: prettier
+        name: Prettier
+        entry: pnpm exec prettier
+        language: system
+        files: \.(js|jsx|ts|tsx|json|md|yml|yaml)$
+        args: [--write]
+
+  # TypeScript type checking
+  - repo: local
+    hooks:
+      - id: tsc
+        name: TypeScript Check
+        entry: pnpm exec tsc
+        language: system
+        files: \.(ts|tsx)$
+        args: [--noEmit]
+        pass_filenames: false
+
+  # Semgrep security scanning
+  - repo: local
+    hooks:
+      - id: semgrep
+        name: Semgrep Security Scan
+        entry: pnpm exec semgrep
+        language: system
+        files: \.(js|jsx|ts|tsx)$
+        args: [--config=.semgrep.yml, --error, --quiet]
+        pass_filenames: false
+
+  # Prisma schema validation
+  - repo: local
+    hooks:
+      - id: prisma-validate
+        name: Prisma Schema Validation
+        entry: pnpm exec prisma
+        language: system
+        files: ^prisma/schema\.prisma$
+        args: [validate]
+        pass_filenames: false
+
+  # Package.json validation
+  - repo: local
+    hooks:
+      - id: package-json-lint
+        name: Package.json Lint
+        entry: bash -c
+        language: system
+        files: ^package\.json$
+        args:
+          - |
+            if ! jq empty package.json; then
+              echo "Invalid JSON in package.json"
+              exit 1
+            fi
+            echo "✅ package.json is valid"
+
+  # Environment file validation
+  - repo: local
+    hooks:
+      - id: env-validation
+        name: Environment File Validation
+        entry: bash -c
+        language: system
+        files: ^\.env.*$
+        args:
+          - |
+            for file in .env*; do
+              if [[ -f "$file" && "$file" != ".env.example" ]]; then
+                echo "⚠️  Warning: $file should not be committed"
+                exit 1
+              fi
+            done
+            echo "✅ No .env files committed"
+
+  # Security checks for secrets
+  - repo: local
+    hooks:
+      - id: detect-secrets
+        name: Detect Hardcoded Secrets
+        entry: bash -c
+        language: system
+        files: \.(js|jsx|ts|tsx|json|yml|yaml)$
+        args:
+          - |
+            if grep -r -E "(sk-[a-zA-Z0-9]{32,}|pk_[a-zA-Z0-9]{32,}|rk_[a-zA-Z0-9]{32,})" . --exclude-dir=node_modules --exclude-dir=.git; then
+              echo "❌ Hardcoded API keys detected!"
+              exit 1
+            fi
+            echo "✅ No hardcoded secrets found"
+
+  # Database migration checks
+  - repo: local
+    hooks:
+      - id: migration-check
+        name: Database Migration Safety Check
+        entry: bash -c
+        language: system
+        files: ^prisma/migrations/.*\.sql$
+        args:
+          - |
+            for file in $(git diff --cached --name-only --diff-filter=A | grep "prisma/migrations.*\.sql"); do
+              if grep -i "DROP\|DELETE\|TRUNCATE" "$file"; then
+                echo "⚠️  Warning: Destructive SQL operation in $file"
+                echo "Please review carefully before committing"
+              fi
+            done
+            echo "✅ Migration safety check passed"
+
+  # Dockerfile security checks
+  - repo: local
+    hooks:
+      - id: dockerfile-lint
+        name: Dockerfile Security Lint
+        entry: bash -c
+        language: system
+        files: ^Dockerfile.*$
+        args:
+          - |
+            for file in $(git diff --cached --name-only | grep "Dockerfile"); do
+              if grep -i "ADD http" "$file"; then
+                echo "❌ Use COPY instead of ADD for local files in $file"
+                exit 1
+              fi
+              if grep "USER root" "$file"; then
+                echo "⚠️  Warning: Running as root user in $file"
+              fi
+            done
+            echo "✅ Dockerfile checks passed"
+
+  # AI-specific security checks
+  - repo: local
+    hooks:
+      - id: ai-security-check
+        name: AI Security Check
+        entry: bash -c
+        language: system
+        files: \.(js|jsx|ts|tsx)$
+        args:
+          - |
+            if grep -r -i "ignore.*previous.*instruction\|system.*override\|act.*as.*admin" . --include="*.ts" --include="*.js" --include="*.tsx" --include="*.jsx" --exclude-dir=node_modules; then
+              echo "⚠️  Warning: Potential prompt injection patterns detected"
+            fi
+            echo "✅ AI security check passed"
+
+# Global configuration
+default_stages: [commit]
+fail_fast: false
+minimum_pre_commit_version: "3.0.0"
+
+# CI configuration
+ci:
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from pre-commit hooks
+
+    for more information, see https://pre-commit.ci
+  autofix_prs: true
+  autoupdate_branch: ''
+  autoupdate_commit_msg: '[pre-commit.ci] pre-commit autoupdate'
+  autoupdate_schedule: weekly
+  skip: []
+  submodules: false

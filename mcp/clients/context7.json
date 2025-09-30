@@ -1,0 +1,74 @@
+{
+  "name": "context7",
+  "description": "Context7 MCP client configuration for Magi platform",
+  "version": "1.0.0",
+  "endpoints": [
+    {
+      "id": "local",
+      "name": "Local Context7 Server",
+      "url": "http://localhost:3001",
+      "description": "Local development Context7 MCP server",
+      "enabled": true,
+      "timeout": 30000,
+      "retries": 3,
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Magi/1.0.0"
+      }
+    },
+    {
+      "id": "docker",
+      "name": "Docker Context7 Server",
+      "url": "http://localhost:8080",
+      "description": "Docker Desktop Context7 MCP server",
+      "enabled": true,
+      "timeout": 30000,
+      "retries": 3,
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Magi/1.0.0"
+      }
+    }
+  ],
+  "authentication": {
+    "type": "bearer",
+    "tokenEnvVar": "CONTEXT7_TOKEN",
+    "required": false
+  },
+  "tools": {
+    "expected": [
+      "memory.store",
+      "memory.retrieve",
+      "memory.search",
+      "context.analyze",
+      "embeddings.create",
+      "knowledge.query"
+    ],
+    "timeout": 15000
+  },
+  "logging": {
+    "enabled": true,
+    "level": "info",
+    "includeRequests": true,
+    "includeResponses": true,
+    "maskSensitive": true,
+    "destination": "telemetry_events"
+  },
+  "rateLimit": {
+    "enabled": true,
+    "requestsPerMinute": 100,
+    "burstLimit": 10
+  },
+  "fallback": {
+    "enabled": true,
+    "strategy": "failover",
+    "maxFailures": 3,
+    "resetInterval": 300000
+  },
+  "health": {
+    "checkInterval": 60000,
+    "endpoint": "/health",
+    "expectedStatus": 200,
+    "timeout": 5000
+  }
+}

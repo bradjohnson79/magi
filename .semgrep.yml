@@ -1,0 +1,223 @@
+rules:
+  # Include standard rulesets
+  - p/ci
+  - p/owasp-top-ten
+  - p/ai/llm-security
+  - p/javascript
+  - p/typescript
+  - p/docker
+  - p/secrets
+
+  # Custom rule: Block hardcoded API keys
+  - id: hardcoded-api-keys
+    pattern-either:
+      - pattern: |
+          $VAR = "sk-..."
+      - pattern: |
+          $VAR = "pk_..."
+      - pattern: |
+          $VAR = "rk_..."
+      - pattern: |
+          const $VAR = "sk-..."
+      - pattern: |
+          let $VAR = "sk-..."
+      - pattern: |
+          var $VAR = "sk-..."
+      - pattern: |
+          $VAR: "sk-..."
+      - pattern: |
+          $VAR: "pk_..."
+      - pattern-regex: |
+          (sk|pk|rk)_[a-zA-Z0-9]{32,}
+    message: "Hardcoded API key detected. Use environment variables instead."
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      references:
+        - https://cwe.mitre.org/data/definitions/798.html
+
+  # Custom rule: Ban child_process.exec without allowlist
+  - id: unsafe-child-process-exec
+    pattern-either:
+      - pattern: |
+          child_process.exec($CMD, ...)
+      - pattern: |
+          exec($CMD, ...)
+      - pattern: |
+          execSync($CMD, ...)
+      - pattern: |
+          spawn($CMD, ...)
+    pattern-not-inside: |
+      // SEMGREP_SAFE: allowlisted command
+      ...
+    message: "Use of child_process.exec/spawn detected. Ensure command is allowlisted or use execFile with fixed arguments."
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+      references:
+        - https://nodejs.org/api/child_process.html#child_processexeccommand-options-callback
+
+  # Custom rule: Disallow eval and new Function
+  - id: unsafe-code-evaluation
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+      - pattern: setTimeout($STR, ...)
+      - pattern: setInterval($STR, ...)
+    pattern-not-inside: |
+      // SEMGREP_SAFE: code evaluation needed
+      ...
+    message: "Dynamic code evaluation detected. Avoid eval(), new Function(), and string-based timers."
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code"
+      references:
+        - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/eval
+
+  # Custom rule: Detect prompt injection patterns
+  - id: potential-prompt-injection
+    pattern-either:
+      - pattern-regex: |
+          (ignore.*(previous|above|system).*(instruction|prompt|rule))
+      - pattern-regex: |
+          (system.*(override|bypass|ignore))
+      - pattern-regex: |
+          (act.as.*(developer|admin|root))
+      - pattern-regex: |
+          (pretend.*(you.are|to.be))
+    message: "Potential prompt injection pattern detected in string literal."
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      category: security
+      subcategory: ai-security
+      references:
+        - https://owasp.org/www-project-top-10-for-large-language-model-applications/
+
+  # Custom rule: Secrets in environment variable assignments
+  - id: secrets-in-env-assignment
+    pattern-either:
+      - pattern: |
+          process.env.$VAR = "..."
+      - pattern: |
+          $ENV[$KEY] = "..."
+    pattern-inside: |
+      $...
+    pattern-regex: |
+        .*(password|secret|key|token|api).*=.*[\"'][a-zA-Z0-9+/=]{20,}[\"']
+    message: "Potential secret being assigned to environment variable. Ensure this is intentional."
+    languages: [javascript, typescript]
+    severity: INFO
+    metadata:
+      category: security
+      subcategory: secrets
+
+  # Custom rule: SQL injection in template literals
+  - id: sql-injection-template-literal
+    pattern: |
+      `SELECT ... ${$USER_INPUT} ...`
+    message: "Potential SQL injection in template literal. Use parameterized queries."
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+
+  # Custom rule: Unsafe URL construction
+  - id: unsafe-url-construction
+    pattern-either:
+      - pattern: |
+          new URL($USER_INPUT)
+      - pattern: |
+          fetch($USER_INPUT)
+      - pattern: |
+          axios.get($USER_INPUT)
+      - pattern: |
+          http.get($USER_INPUT)
+    pattern-not-inside: |
+      // SEMGREP_SAFE: URL validated
+      ...
+    message: "URL constructed from user input. Validate and sanitize URLs."
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: "CWE-918: Server-Side Request Forgery (SSRF)"
+
+  # Custom rule: Console.log in production code
+  - id: console-log-in-production
+    pattern-either:
+      - pattern: console.log(...)
+      - pattern: console.debug(...)
+      - pattern: console.info(...)
+    pattern-not-inside: |
+      if (process.env.NODE_ENV === 'development') {
+        ...
+      }
+    message: "Console statements should be removed or guarded in production code."
+    languages: [javascript, typescript]
+    severity: INFO
+    metadata:
+      category: best-practice
+
+  # Custom rule: Missing error handling in async functions
+  - id: missing-async-error-handling
+    pattern: |
+      async function $FUNC(...) {
+        ...
+        await $CALL(...)
+        ...
+      }
+    pattern-not-inside: |
+      try {
+        ...
+      } catch (...) {
+        ...
+      }
+    pattern-not-inside: |
+      $CALL(...).catch(...)
+    message: "Async function missing error handling. Add try-catch or .catch()."
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      category: best-practice
+
+# Configure severity levels and output
+severity: ERROR
+auto_fix: false
+verbose: true
+metrics: off
+
+# Paths to scan
+paths:
+  include:
+    - "app/"
+    - "components/"
+    - "lib/"
+    - "services/"
+    - "*.js"
+    - "*.ts"
+    - "*.jsx"
+    - "*.tsx"
+
+# Paths to ignore
+paths:
+  exclude:
+    - "node_modules/"
+    - ".next/"
+    - "dist/"
+    - "build/"
+    - "coverage/"
+    - "*.test.js"
+    - "*.test.ts"
+    - "*.spec.js"
+    - "*.spec.ts"
+    - "playwright-report/"
+    - "test-results/"
+    - "prisma/migrations/"

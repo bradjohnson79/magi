@@ -1,0 +1,151 @@
+name: Magi Alert Handler
+
+on:
+  repository_dispatch:
+    types: [magi_alert]
+
+jobs:
+  handle-alert:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Parse Alert
+      id: parse
+      run: |
+        echo "Alert received:"
+        echo "Type: ${{ github.event.client_payload.alert_type }}"
+        echo "Severity: ${{ github.event.client_payload.severity }}"
+        echo "Title: ${{ github.event.client_payload.title }}"
+        echo "Message: ${{ github.event.client_payload.message }}"
+        echo "Trace ID: ${{ github.event.client_payload.trace_id }}"
+
+        # Set outputs for use in subsequent steps
+        echo "alert_type=${{ github.event.client_payload.alert_type }}" >> $GITHUB_OUTPUT
+        echo "severity=${{ github.event.client_payload.severity }}" >> $GITHUB_OUTPUT
+        echo "title=${{ github.event.client_payload.title }}" >> $GITHUB_OUTPUT
+        echo "message=${{ github.event.client_payload.message }}" >> $GITHUB_OUTPUT
+
+    - name: Create Issue for Critical Alerts
+      if: github.event.client_payload.severity == 'critical'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const title = `🚨 Critical Alert: ${{ steps.parse.outputs.title }}`;
+          const body = `
+          ## Critical Alert Detected
+
+          **Type:** ${{ steps.parse.outputs.alert_type }}
+          **Severity:** ${{ steps.parse.outputs.severity }}
+          **Triggered:** ${{ github.event.client_payload.triggered_at }}
+          **Trace ID:** ${{ github.event.client_payload.trace_id }}
+
+          ### Message
+          ${{ steps.parse.outputs.message }}
+
+          ### Metadata
+          \`\`\`json
+          ${{ toJson(github.event.client_payload.metadata) }}
+          \`\`\`
+
+          ### Action Required
+          This is a critical alert that requires immediate attention. Please investigate and resolve the underlying issue.
+
+          ---
+          *This issue was automatically created by the Magi Alert System*
+          `;
+
+          const issue = await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: title,
+            body: body,
+            labels: ['alert', 'critical', 'urgent']
+          });
+
+          console.log(`Created issue #${issue.data.number} for critical alert`);
+
+    - name: Send Slack Notification (Backup)
+      if: github.event.client_payload.severity == 'critical' || github.event.client_payload.severity == 'error'
+      run: |
+        if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+          curl -X POST \
+            -H 'Content-type: application/json' \
+            --data '{
+              "text": "🚨 Magi Alert: ${{ steps.parse.outputs.title }}",
+              "attachments": [
+                {
+                  "color": "danger",
+                  "fields": [
+                    {
+                      "title": "Type",
+                      "value": "${{ steps.parse.outputs.alert_type }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Severity",
+                      "value": "${{ steps.parse.outputs.severity }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Message",
+                      "value": "${{ steps.parse.outputs.message }}",
+                      "short": false
+                    },
+                    {
+                      "title": "Trace ID",
+                      "value": "${{ github.event.client_payload.trace_id }}",
+                      "short": true
+                    }
+                  ],
+                  "footer": "Magi Platform - GitHub Actions"
+                }
+              ]
+            }' \
+            ${{ secrets.SLACK_WEBHOOK_URL }}
+        else
+          echo "SLACK_WEBHOOK_URL not configured"
+        fi
+
+    - name: Log Alert to Actions
+      run: |
+        echo "::notice title=Magi Alert (${{ steps.parse.outputs.severity }})::${{ steps.parse.outputs.title }} - ${{ steps.parse.outputs.message }}"
+
+        if [ "${{ steps.parse.outputs.severity }}" = "critical" ]; then
+          echo "::error title=Critical Alert::${{ steps.parse.outputs.title }}"
+        elif [ "${{ steps.parse.outputs.severity }}" = "error" ]; then
+          echo "::error title=Error Alert::${{ steps.parse.outputs.title }}"
+        elif [ "${{ steps.parse.outputs.severity }}" = "warning" ]; then
+          echo "::warning title=Warning Alert::${{ steps.parse.outputs.title }}"
+        fi
+
+    - name: Trigger Additional Workflows
+      if: github.event.client_payload.alert_type == 'health_check_failed' || github.event.client_payload.alert_type == 'database_connection_failed'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          // Trigger health check workflow for infrastructure alerts
+          await github.rest.actions.createWorkflowDispatch({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            workflow_id: 'health-check.yml',
+            ref: 'main',
+            inputs: {
+              triggered_by: 'alert',
+              alert_type: '${{ steps.parse.outputs.alert_type }}',
+              severity: '${{ steps.parse.outputs.severity }}'
+            }
+          });
+
+    - name: Update Alert Status
+      run: |
+        echo "Alert processed successfully"
+        echo "Alert Type: ${{ steps.parse.outputs.alert_type }}"
+        echo "Severity: ${{ steps.parse.outputs.severity }}"
+        echo "Actions taken:"
+        if [ "${{ steps.parse.outputs.severity }}" = "critical" ]; then
+          echo "- Created GitHub issue"
+        fi
+        echo "- Logged to GitHub Actions"
+        echo "- Sent notifications as configured"

@@ -1,0 +1,226 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [created, published]
+
+env:
+  NODE_VERSION: 20
+  PNPM_VERSION: 8
+  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false  # Don't cancel production deployments
+
+jobs:
+  deploy-production:
+    name: Deploy to Production Environment
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Install Semgrep
+        run: pip install semgrep
+
+      - name: Run Pre-deploy Security Scan
+        run: |
+          # Comprehensive Semgrep scan for production
+          pnpm exec semgrep --config=.semgrep.yml --json --quiet . > semgrep-predeploy.json || true
+
+          # Check for any new high severity findings
+          HIGH_COUNT=$(jq '[.results[] | select(.extra.severity == "ERROR")] | length' semgrep-predeploy.json 2>/dev/null || echo "0")
+
+          if [ "$HIGH_COUNT" -gt 0 ]; then
+            echo "❌ BLOCKING PRODUCTION DEPLOYMENT: $HIGH_COUNT high severity security issues found"
+            echo "Critical security issues that must be fixed before production deployment:"
+            jq -r '.results[] | select(.extra.severity == "ERROR") | "- \(.path):\(.start.line) - \(.message) (\(.check_id))"' semgrep-predeploy.json
+            exit 1
+          else
+            echo "✅ Pre-deploy security scan passed for production"
+          fi
+
+      - name: Run database migrations (production)
+        run: pnpm db:push
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_PROD }}
+
+      - name: Install Vercel CLI
+        run: pnpm add -g vercel@latest
+
+      - name: Pull Vercel environment information
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build project artifacts
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_PROD }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Deploy to Vercel (production)
+        id: deploy
+        run: |
+          DEPLOYMENT_URL=$(vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }})
+          echo "deployment_url=$DEPLOYMENT_URL" >> $GITHUB_OUTPUT
+          echo "Deployed to: $DEPLOYMENT_URL"
+
+      - name: Wait for deployment to be ready
+        run: |
+          echo "Waiting for deployment to be fully ready..."
+          sleep 60  # Wait longer for production deployment
+
+      - name: Run comprehensive smoke tests
+        run: |
+          echo "Running comprehensive smoke tests against production deployment..."
+
+          # Test health endpoint
+          echo "Testing health endpoint..."
+          PROD_URL="${{ steps.deploy.outputs.deployment_url }}"
+          echo "Testing production URL: $PROD_URL"
+
+          health_response=$(curl -sf "$PROD_URL/api/health" || echo "failed")
+          if [ "$health_response" = "failed" ]; then
+            echo "❌ Health check failed - unable to reach endpoint"
+            exit 1
+          fi
+
+          # Parse and validate health response
+          status=$(echo "$health_response" | jq -r '.status // "unknown"')
+          commit=$(echo "$health_response" | jq -r '.commit // "unknown"')
+          environment=$(echo "$health_response" | jq -r '.environment // "unknown"')
+
+          if [ "$status" != "ok" ]; then
+            echo "❌ Health check failed with status: $status"
+            echo "Response: $health_response"
+            exit 1
+          fi
+
+          echo "✅ Health endpoint check passed"
+          echo "✅ Status: $status"
+          echo "✅ Commit: $commit"
+          echo "✅ Environment: $environment"
+
+          # Test API endpoints
+          echo "Testing API endpoints..."
+
+          # Test models endpoint (should require auth but return 401, not 500)
+          models_response=$(curl -s -o /dev/null -w "%{http_code}" "${{ steps.deploy.outputs.deployment_url }}/api/v1/models")
+          if [ "$models_response" != "401" ]; then
+            echo "❌ Models API check failed with status code: $models_response (expected 401)"
+            exit 1
+          fi
+          echo "✅ Models API endpoint check passed"
+
+          # Test basic page loads
+          echo "Testing page loads..."
+          home_response=$(curl -s -o /dev/null -w "%{http_code}" "${{ steps.deploy.outputs.deployment_url }}/")
+          if [ "$home_response" != "200" ] && [ "$home_response" != "307" ] && [ "$home_response" != "302" ]; then
+            echo "❌ Home page check failed with status code: $home_response"
+            exit 1
+          fi
+          echo "✅ Home page check passed"
+
+          echo "🎉 All smoke tests passed!"
+
+      - name: Update Sentry deployment
+        if: success()
+        run: |
+          if [ -n "${{ secrets.SENTRY_DSN }}" ]; then
+            curl -sH 'Authorization: Bearer ${{ secrets.SENTRY_AUTH_TOKEN }}' \
+              -X POST \
+              -H 'Content-Type: application/json' \
+              -d '{
+                "version": "${{ github.sha }}",
+                "environment": "production",
+                "projects": ["magi-platform"]
+              }' \
+              'https://sentry.io/api/0/organizations/${{ secrets.SENTRY_ORG }}/releases/' || echo "Sentry notification failed (non-blocking)"
+          fi
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "🚨 Production deployment failed! Initiating rollback..."
+          # Get previous successful deployment
+          PREVIOUS_DEPLOYMENT=$(vercel ls --token=${{ secrets.VERCEL_TOKEN }} --scope=${{ secrets.VERCEL_ORG_ID }} | grep -E "^\s*\S+\s+production\s+READY" | head -n 2 | tail -n 1 | awk '{print $1}')
+          if [ -n "$PREVIOUS_DEPLOYMENT" ]; then
+            echo "Rolling back to: $PREVIOUS_DEPLOYMENT"
+            vercel promote $PREVIOUS_DEPLOYMENT --token=${{ secrets.VERCEL_TOKEN }} --scope=${{ secrets.VERCEL_ORG_ID }}
+            echo "✅ Rollback completed"
+          else
+            echo "❌ No previous deployment found for rollback"
+          fi
+
+      - name: Log deployment metadata
+        if: always()
+        run: |
+          echo "📋 Production Deployment Metadata:"
+          echo "Status: ${{ job.status }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Branch/Tag: ${{ github.ref_name }}"
+          echo "Actor: ${{ github.actor }}"
+          echo "Deployment time: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "Deployment URL: ${{ steps.deploy.outputs.deployment_url }}"
+          echo "Release type: ${{ github.event_name }}"
+
+      - name: Create deployment summary
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "## 🚀 Production Deployment Successful!" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Deployment URL:** ${{ steps.deploy.outputs.deployment_url }}" >> $GITHUB_STEP_SUMMARY
+            echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Deployed by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### ✅ Smoke Tests Passed" >> $GITHUB_STEP_SUMMARY
+            echo "- Health endpoint" >> $GITHUB_STEP_SUMMARY
+            echo "- API endpoints" >> $GITHUB_STEP_SUMMARY
+            echo "- Page loads" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ❌ Production Deployment Failed!" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Failed step:** Check the logs above for details" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Automatic rollback has been attempted if possible." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Notify on success
+        if: success()
+        run: |
+          echo "🎉 Production deployment completed successfully!"
+          echo "Magi is now live at: ${{ steps.deploy.outputs.deployment_url }}"

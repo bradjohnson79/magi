@@ -1,0 +1,492 @@
+import { NextRequest, NextResponse } from "next/server";
+
+export const runtime = "nodejs";
+import { healthCheck } from "@/lib/db";
+import { prisma } from "@/lib/db";
+import { metricsCollector } from "@/services/metrics/collector";
+// import {
+//   withSpan,
+//   createAPISpan,
+//   addSpanAttributes,
+//   SPAN_ATTRIBUTES,
+//   getCurrentTraceId
+// } from "@/services/tracing/setup"; // Temporarily disabled for Edge Runtime compatibility
+import { alerts } from "@/services/alerts/manager";
+
+export async function GET(req: NextRequest) {
+  return await withSpan(
+    'health.check',
+    async (span) => {
+      const requestStart = Date.now();
+      const traceId = getCurrentTraceId();
+
+      // Add span attributes for the health check
+      addSpanAttributes({
+        [SPAN_ATTRIBUTES.OPERATION_TYPE]: 'health_check',
+        [SPAN_ATTRIBUTES.ROUTE_PATH]: '/api/health',
+        'http.method': 'GET',
+      });
+
+      try {
+    // Get commit hash from various sources
+    const commit =
+      process.env.VERCEL_GIT_COMMIT_SHA ||
+      process.env.GITHUB_SHA ||
+      process.env.GIT_COMMIT ||
+      "unknown";
+
+    // Get build metadata
+    const buildMetadata = {
+      timestamp: new Date().toISOString(),
+      commit: commit.substring(0, 8), // Short commit hash
+      environment: process.env.NODE_ENV || "development",
+      uptime: process.uptime(),
+      version: process.env.npm_package_version || "1.0.0",
+      deploymentUrl: process.env.VERCEL_URL || process.env.DEPLOYMENT_URL,
+    };
+
+    // Comprehensive health checks
+    const healthChecks = await performHealthChecks();
+
+    // Determine overall health
+    const isHealthy = Object.values(healthChecks).every(
+      check => typeof check === 'object' ? check.status === 'healthy' : check === 'healthy'
+    );
+    const status = isHealthy ? "ok" : "unhealthy";
+
+    const response = {
+      status,
+      commit: buildMetadata.commit,
+      time: buildMetadata.timestamp,
+      uptime: buildMetadata.uptime,
+      version: buildMetadata.version,
+      environment: buildMetadata.environment,
+      deploymentUrl: buildMetadata.deploymentUrl,
+      checks: healthChecks,
+    };
+
+    // Record successful health check latency
+    const responseTime = Date.now() - requestStart;
+    await metricsCollector.recordLatency('health_check_endpoint', responseTime);
+
+    // Add tracing information to span
+    addSpanAttributes({
+      'http.status_code': isHealthy ? 200 : 503,
+      'health.status': status,
+      'response.time_ms': responseTime,
+    });
+
+    return NextResponse.json(response, {
+      status: isHealthy ? 200 : 503,
+      headers: {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+        "X-Health-Check": "magi-platform",
+        "X-Commit": buildMetadata.commit,
+        "X-Response-Time": responseTime.toString(),
+        "X-Trace-Id": traceId || '',
+      },
+    });
+  } catch (error) {
+    console.error("Health check failed:", error);
+
+    // Record health check error and latency
+    const responseTime = Date.now() - requestStart;
+    await metricsCollector.recordError('health_check_endpoint', error as Error);
+    await metricsCollector.recordLatency('health_check_endpoint', responseTime);
+
+    const commit =
+      process.env.VERCEL_GIT_COMMIT_SHA ||
+      process.env.GITHUB_SHA ||
+      process.env.GIT_COMMIT ||
+      "unknown";
+
+    return NextResponse.json(
+      {
+        status: "error",
+        commit: commit.substring(0, 8),
+        time: new Date().toISOString(),
+        error: "Health check failed",
+        environment: process.env.NODE_ENV || "development",
+        checks: {
+          database: "error",
+          api: "error",
+        },
+      },
+      {
+        status: 503,
+        headers: {
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          "Pragma": "no-cache",
+          "Expires": "0",
+          "X-Health-Check": "magi-platform",
+          "X-Commit": commit.substring(0, 8),
+        },
+      }
+    );
+      }
+    }
+  );
+}
+
+// Support HEAD requests for simple health checks
+export async function HEAD(req: NextRequest) {
+  return await withSpan(
+    'health.check.head',
+    async (span) => {
+      const requestStart = Date.now();
+      const traceId = getCurrentTraceId();
+
+      // Add span attributes for the HEAD health check
+      addSpanAttributes({
+        [SPAN_ATTRIBUTES.OPERATION_TYPE]: 'health_check',
+        [SPAN_ATTRIBUTES.ROUTE_PATH]: '/api/health',
+        'http.method': 'HEAD',
+      });
+
+      try {
+    const healthChecks = await performHealthChecks();
+    const isHealthy = Object.values(healthChecks).every(
+      check => typeof check === 'object' ? check.status === 'healthy' : check === 'healthy'
+    );
+
+    // Record HEAD request latency
+    const responseTime = Date.now() - requestStart;
+    await metricsCollector.recordLatency('health_check_head', responseTime);
+
+    // Add tracing information to span
+    addSpanAttributes({
+      'http.status_code': isHealthy ? 200 : 503,
+      'health.status': isHealthy ? 'healthy' : 'unhealthy',
+      'response.time_ms': responseTime,
+    });
+
+    return new Response(null, {
+      status: isHealthy ? 200 : 503,
+      headers: {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "X-Response-Time": responseTime.toString(),
+        "X-Trace-Id": traceId || '',
+      },
+    });
+  } catch (error) {
+    // Record HEAD request error
+    const responseTime = Date.now() - requestStart;
+    await metricsCollector.recordError('health_check_head', error as Error);
+    await metricsCollector.recordLatency('health_check_head', responseTime);
+
+    return new Response(null, {
+      status: 503,
+      headers: {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "X-Response-Time": responseTime.toString(),
+      },
+    });
+      }
+    }
+  );
+}
+
+/**
+ * Perform comprehensive health checks
+ */
+async function performHealthChecks() {
+  const checks: Record<string, any> = {};
+
+  // Database health check with detailed info
+  try {
+    const dbStart = Date.now();
+    const dbHealthy = await healthCheck();
+    const dbLatency = Date.now() - dbStart;
+
+    // Record database latency metric
+    await metricsCollector.recordDatabaseQuery('health_check', dbLatency, dbHealthy);
+
+    // Additional DB connection pool info
+    const connectionInfo = await checkDatabaseConnections();
+
+    checks.database = {
+      status: dbHealthy ? 'healthy' : 'unhealthy',
+      latency: dbLatency,
+      connections: connectionInfo,
+      lastChecked: new Date().toISOString(),
+    };
+  } catch (error) {
+    // Record database error
+    await metricsCollector.recordError('database_health_check', error as Error);
+
+    // Trigger database connection alert
+    await alerts.healthCheckFailed('database', error instanceof Error ? error.message : 'Unknown error');
+
+    checks.database = {
+      status: 'error',
+      error: error instanceof Error ? error.message : 'Unknown error',
+      lastChecked: new Date().toISOString(),
+    };
+  }
+
+  // Storage health check (file system access)
+  try {
+    const storageStart = Date.now();
+    await checkStorageHealth();
+    const storageLatency = Date.now() - storageStart;
+
+    // Record storage operation metrics
+    await metricsCollector.recordStorageOperation('write', storageLatency, true);
+
+    checks.storage = {
+      status: 'healthy',
+      latency: storageLatency,
+      lastChecked: new Date().toISOString(),
+    };
+  } catch (error) {
+    // Record storage error
+    await metricsCollector.recordError('storage_health_check', error as Error);
+
+    // Trigger storage health alert
+    await alerts.healthCheckFailed('storage', error instanceof Error ? error.message : 'Unknown error');
+
+    checks.storage = {
+      status: 'error',
+      error: error instanceof Error ? error.message : 'Unknown error',
+      lastChecked: new Date().toISOString(),
+    };
+  }
+
+  // MCP (Model Context Protocol) health check
+  try {
+    const mcpStart = Date.now();
+    const mcpHealth = await checkMCPHealth();
+    const mcpLatency = Date.now() - mcpStart;
+
+    // Record MCP health metrics
+    await metricsCollector.recordMCPHealth('overall', mcpHealth.healthy, mcpLatency);
+
+    // Record individual service metrics
+    for (const [serviceName, serviceHealth] of Object.entries(mcpHealth.services)) {
+      await metricsCollector.recordMCPHealth(serviceName, serviceHealth.healthy);
+    }
+
+    checks.mcp = {
+      status: mcpHealth.healthy ? 'healthy' : 'unhealthy',
+      latency: mcpLatency,
+      services: mcpHealth.services,
+      lastChecked: new Date().toISOString(),
+    };
+  } catch (error) {
+    // Record MCP error
+    await metricsCollector.recordError('mcp_health_check', error as Error);
+
+    // Trigger MCP health alert
+    await alerts.healthCheckFailed('mcp', error instanceof Error ? error.message : 'Unknown error');
+
+    checks.mcp = {
+      status: 'error',
+      error: error instanceof Error ? error.message : 'Unknown error',
+      lastChecked: new Date().toISOString(),
+    };
+  }
+
+  // System resource checks
+  checks.system = {
+    status: 'healthy',
+    memory: {
+      used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+      total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
+      external: Math.round(process.memoryUsage().external / 1024 / 1024),
+      rss: Math.round(process.memoryUsage().rss / 1024 / 1024),
+    },
+    platform: process.platform,
+    nodeVersion: process.version,
+    uptime: process.uptime(),
+    cpu: process.cpuUsage(),
+  };
+
+  // Record system metrics
+  await metricsCollector.recordSystemMetrics();
+
+  // API health (we're responding, so it's healthy)
+  checks.api = {
+    status: 'healthy',
+    responseTime: Date.now(),
+    lastChecked: new Date().toISOString(),
+  };
+
+  return checks;
+}
+
+/**
+ * Check database connection pool status
+ */
+async function checkDatabaseConnections() {
+  try {
+    // Simple query to test connection
+    const result = await prisma.$queryRaw`SELECT 1 as health_check`;
+
+    return {
+      status: 'connected',
+      queryTest: Array.isArray(result) && result.length > 0,
+    };
+  } catch (error) {
+    return {
+      status: 'error',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Check storage/file system health
+ */
+async function checkStorageHealth() {
+  const fs = require('fs').promises;
+  const path = require('path');
+
+  // Test write/read/delete cycle in temp directory
+  const testFile = path.join(process.cwd(), '.tmp', 'health-check.txt');
+  const testData = `health-check-${Date.now()}`;
+
+  try {
+    // Ensure .tmp directory exists
+    await fs.mkdir(path.dirname(testFile), { recursive: true });
+
+    // Write test file
+    await fs.writeFile(testFile, testData);
+
+    // Read test file
+    const readData = await fs.readFile(testFile, 'utf8');
+
+    // Verify data matches
+    if (readData !== testData) {
+      throw new Error('Data integrity check failed');
+    }
+
+    // Clean up test file
+    await fs.unlink(testFile);
+
+    return true;
+  } catch (error) {
+    // Clean up on error
+    try {
+      await fs.unlink(testFile);
+    } catch {
+      // Ignore cleanup errors
+    }
+    throw error;
+  }
+}
+
+/**
+ * Check MCP (Model Context Protocol) health
+ */
+async function checkMCPHealth() {
+  const services = {
+    github: { healthy: false, error: null as string | null },
+    filesystem: { healthy: false, error: null as string | null },
+  };
+
+  // Check GitHub MCP server
+  try {
+    // Test if GitHub MCP server is accessible
+    const { spawn } = require('child_process');
+
+    const testGitHubMCP = () => new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        resolve(false);
+      }, 3000);
+
+      try {
+        const process = spawn('npx', ['-y', '@modelcontextprotocol/server-github', '--help'], {
+          stdio: 'pipe',
+          timeout: 2000,
+        });
+
+        process.on('error', () => {
+          clearTimeout(timeout);
+          resolve(false);
+        });
+
+        process.stdout.on('data', (data) => {
+          if (data.toString().includes('GitHub MCP Server')) {
+            clearTimeout(timeout);
+            process.kill();
+            resolve(true);
+          }
+        });
+
+        process.on('exit', () => {
+          clearTimeout(timeout);
+          resolve(false);
+        });
+      } catch (error) {
+        clearTimeout(timeout);
+        resolve(false);
+      }
+    });
+
+    const gitHubHealthy = await testGitHubMCP();
+    services.github.healthy = gitHubHealthy as boolean;
+    if (!gitHubHealthy) {
+      services.github.error = 'GitHub MCP server not responding';
+      // Trigger MCP service down alert
+      await alerts.mcpServiceDown('github', 'GitHub MCP server not responding');
+    }
+  } catch (error) {
+    services.github.error = error instanceof Error ? error.message : 'Unknown error';
+  }
+
+  // Check filesystem MCP server
+  try {
+    const testFilesystemMCP = () => new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        resolve(false);
+      }, 3000);
+
+      try {
+        const process = spawn('npx', ['-y', '@modelcontextprotocol/server-filesystem', '--help'], {
+          stdio: 'pipe',
+          timeout: 2000,
+        });
+
+        process.on('error', () => {
+          clearTimeout(timeout);
+          resolve(false);
+        });
+
+        process.stdout.on('data', (data) => {
+          if (data.toString().includes('MCP')) {
+            clearTimeout(timeout);
+            process.kill();
+            resolve(true);
+          }
+        });
+
+        process.on('exit', () => {
+          clearTimeout(timeout);
+          resolve(false);
+        });
+      } catch (error) {
+        clearTimeout(timeout);
+        resolve(false);
+      }
+    });
+
+    const filesystemHealthy = await testFilesystemMCP();
+    services.filesystem.healthy = filesystemHealthy as boolean;
+    if (!filesystemHealthy) {
+      services.filesystem.error = 'Filesystem MCP server not responding';
+      // Trigger MCP service down alert
+      await alerts.mcpServiceDown('filesystem', 'Filesystem MCP server not responding');
+    }
+  } catch (error) {
+    services.filesystem.error = error instanceof Error ? error.message : 'Unknown error';
+  }
+
+  const overallHealthy = Object.values(services).some(service => service.healthy);
+
+  return {
+    healthy: overallHealthy,
+    services,
+  };
+}

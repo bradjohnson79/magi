@@ -1,0 +1,143 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches: [develop]
+
+env:
+  NODE_VERSION: 20
+  PNPM_VERSION: 8
+  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: true
+
+jobs:
+  deploy-staging:
+    name: Deploy to Staging Environment
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Install Semgrep
+        run: pip install semgrep
+
+      - name: Run Pre-deploy Security Scan
+        run: |
+          # Quick Semgrep scan for new HIGH findings
+          pnpm exec semgrep --config=.semgrep.yml --json --quiet . > semgrep-predeploy.json || true
+
+          # Check for high severity findings
+          HIGH_COUNT=$(jq '[.results[] | select(.extra.severity == "ERROR")] | length' semgrep-predeploy.json 2>/dev/null || echo "0")
+
+          if [ "$HIGH_COUNT" -gt 0 ]; then
+            echo "❌ Blocking deployment: $HIGH_COUNT high severity security issues found"
+            jq -r '.results[] | select(.extra.severity == "ERROR") | "- \(.path):\(.start.line) - \(.message)"' semgrep-predeploy.json
+            exit 1
+          else
+            echo "✅ Pre-deploy security scan passed"
+          fi
+
+      - name: Run database migrations (staging)
+        run: pnpm db:push
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
+
+      - name: Install Vercel CLI
+        run: pnpm add -g vercel@latest
+
+      - name: Pull Vercel environment information
+        run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build project artifacts
+        run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY_STAGING }}
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY_STAGING }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN_STAGING }}
+
+      - name: Deploy to Vercel (staging)
+        id: deploy
+        run: |
+          DEPLOYMENT_URL=$(vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }})
+          echo "deployment_url=$DEPLOYMENT_URL" >> $GITHUB_OUTPUT
+          echo "Deployed to: $DEPLOYMENT_URL"
+
+      - name: Run smoke tests
+        run: |
+          echo "Running smoke tests against staging deployment..."
+          sleep 30  # Wait for deployment to be ready
+
+          # Test health endpoint
+          STAGING_URL="${{ steps.deploy.outputs.deployment_url }}"
+          echo "Testing staging URL: $STAGING_URL"
+
+          response=$(curl -sf "$STAGING_URL/api/health" || echo "failed")
+          if [ "$response" = "failed" ]; then
+            echo "❌ Health check failed - unable to reach endpoint"
+            exit 1
+          fi
+
+          # Parse health response
+          status=$(echo "$response" | jq -r '.status // "unknown"')
+          commit=$(echo "$response" | jq -r '.commit // "unknown"')
+
+          if [ "$status" != "ok" ]; then
+            echo "❌ Health check failed with status: $status"
+            echo "Response: $response"
+            exit 1
+          fi
+
+          echo "✅ Health check passed"
+          echo "✅ Staging deployment healthy"
+          echo "✅ Commit: $commit"
+
+      - name: Update deployment status
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "🚀 Staging deployment successful!"
+            echo "URL: ${{ steps.deploy.outputs.deployment_url }}"
+          else
+            echo "❌ Staging deployment failed"
+            exit 1
+          fi
+
+      - name: Log deployment metadata
+        run: |
+          echo "📋 Deployment Metadata:"
+          echo "Commit: ${{ github.sha }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Actor: ${{ github.actor }}"
+          echo "Deployment time: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "Deployment URL: ${{ steps.deploy.outputs.deployment_url }}"
+
+      - name: Notify deployment
+        if: success()
+        run: |
+          echo "🎉 Staging deployment completed successfully!"
+          echo "The latest changes from develop branch are now live on staging."

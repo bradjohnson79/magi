@@ -1,0 +1,1109 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  name          String?
+  role          String   @default("user")
+  clerkId       String?  @unique @map("clerk_id")
+  allowTraining Boolean  @default(false) @map("allow_training")
+  plan          String   @default("trial")
+  metadata      Json     @default("{}")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  ownedTeams    Team[]           @relation("TeamOwner")
+  teamMembers   TeamMember[]
+  projects      Project[]
+  prompts       Prompt[]
+  billing       Billing?
+  logs          Log[]
+  snapshots     Snapshot[]
+  modelRuns     ModelRun[]
+  feedback      Feedback[]
+  telemetry     TelemetryEvent[]
+  usageCounters UsageCounter[]
+  auditLogs     AuditLog[]
+  secrets       Secret[]
+  platformSettings PlatformSetting[]
+  featureFlags  FeatureFlag[]
+  createdAdminSettings AdminSetting[] @relation("AdminSettingCreator")
+  updatedAdminSettings AdminSetting[] @relation("AdminSettingUpdater")
+  ownedWorkspaces Workspace[] @relation("WorkspaceOwner")
+  workspaceMembers WorkspaceMember[]
+  activityLogs ActivityLog[]
+  comments Comment[]
+  templates Template[]
+  customTemplates CustomTemplate[]
+  projectCorrections ProjectCorrection[]
+  installedPlugins Plugin[] @relation("PluginInstaller")
+  pluginExecutions PluginExecution[] @relation("PluginExecutionUser")
+  configuredSSOProviders SSOProvider[] @relation("SSOProviderConfigurer")
+  ssoMappings SSOUserMapping[]
+  dataExportJobs DataExportJob[] @relation("DataExportJobCreator")
+  refactorFeedback RefactorFeedback[]
+  refactorExecutions RefactorExecution[]
+  evolutionEvents EvolutionEvent[]
+  complianceRules ComplianceRule[] @relation("ComplianceRuleCreator")
+
+  @@index([email])
+  @@index([clerkId])
+  @@index([plan])
+  @@map("users")
+}
+
+model Team {
+  id        String   @id @default(uuid())
+  name      String
+  ownerId   String   @map("owner_id")
+  slug      String?  @unique
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  owner    User         @relation("TeamOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members  TeamMember[]
+  projects Project[]
+
+  @@index([ownerId])
+  @@index([slug])
+  @@map("teams")
+}
+
+model TeamMember {
+  id          String   @id @default(uuid())
+  teamId      String   @map("team_id")
+  userId      String   @map("user_id")
+  role        String   @default("member")
+  permissions Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+  @@index([teamId])
+  @@index([userId])
+  @@map("team_members")
+}
+
+model Project {
+  id          String   @id @default(uuid())
+  teamId      String?  @map("team_id")
+  workspaceId String?  @map("workspace_id")
+  ownerId     String   @map("owner_id")
+  name        String
+  type        String?
+  category    String?
+  status      String   @default("active")
+  config      Json     @default("{}")
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  team       Team?            @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  workspace  Workspace?       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  owner      User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  prompts    Prompt[]
+  logs       Log[]
+  snapshots  Snapshot[]
+  modelRuns  ModelRun[]
+  telemetry  TelemetryEvent[]
+  activityLogs ActivityLog[]
+  comments   Comment[]
+  sourceTemplates CustomTemplate[] @relation("CustomTemplateSource")
+  corrections ProjectCorrection[]
+  pluginExecutions PluginExecution[] @relation("PluginExecutionProject")
+  branches ProjectBranch[]
+
+  @@index([teamId])
+  @@index([workspaceId])
+  @@index([ownerId])
+  @@index([status])
+  @@map("projects")
+}
+
+model ProjectBranch {
+  id               String   @id @default(uuid())
+  projectId        String   @map("project_id")
+  branchName       String   @map("branch_name")
+  neonBranchId     String   @map("neon_branch_id")
+  connectionString String   @map("connection_string")
+  previewUrl       String?  @map("preview_url")
+  status           String   @default("creating")
+  metadata         Json     @default("{}")
+  createdAt        DateTime @default(now()) @map("created_at")
+  expiresAt        DateTime? @map("expires_at")
+  deletedAt        DateTime? @map("deleted_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([status])
+  @@index([expiresAt])
+  @@map("project_branches")
+}
+
+model Prompt {
+  id         String   @id @default(uuid())
+  projectId  String   @map("project_id")
+  userId     String?  @map("user_id")
+  content    String   @db.Text
+  response   String?  @db.Text
+  tokensUsed Int?     @map("tokens_used")
+  costCents  Int?     @map("cost_cents")
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([projectId])
+  @@index([userId])
+  @@index([createdAt(sort: Desc)])
+  @@map("prompts")
+}
+
+model Billing {
+  id                   String   @id @default(uuid())
+  userId               String   @unique @map("user_id")
+  plan                 String   @default("free")
+  status               String   @default("active")
+  stripeCustomerId     String?  @map("stripe_customer_id")
+  stripeSubscriptionId String?  @map("stripe_subscription_id")
+  renewalDate          DateTime? @map("renewal_date")
+  usageLimits          Json     @default("{}") @map("usage_limits")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([stripeCustomerId])
+  @@map("billing")
+}
+
+model Log {
+  id        String   @id @default(uuid())
+  projectId String?  @map("project_id")
+  userId    String?  @map("user_id")
+  action    String
+  level     String   @default("info")
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([projectId])
+  @@index([userId])
+  @@index([level])
+  @@index([createdAt(sort: Desc)])
+  @@map("logs")
+}
+
+model Snapshot {
+  id          String   @id @default(uuid())
+  projectId   String   @map("project_id")
+  createdBy   String?  @map("created_by")
+  snapshotName String  @map("snapshot_name")
+  description String?  @db.Text
+  metadata    Json     @default("{}")
+  storageRef  String?  @map("storage_ref")
+  sizeBytes   BigInt?  @map("size_bytes")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  creator User?   @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@index([projectId])
+  @@index([createdBy])
+  @@index([createdAt(sort: Desc)])
+  @@map("snapshots")
+}
+
+model Model {
+  id           String   @id @default(uuid())
+  name         String
+  provider     String
+  role         String
+  version      String?
+  versionTag   String?  @map("version_tag")
+  config       Json     @default("{}")
+  capabilities Json     @default("[]")
+  status       String   @default("stable")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  modelRuns    ModelRun[]
+  modelMetrics ModelMetrics[]
+
+  @@index([provider])
+  @@index([role])
+  @@index([status])
+  @@index([isActive])
+  @@index([versionTag])
+  @@map("models")
+}
+
+model ModelRun {
+  id            String   @id @default(uuid())
+  projectId     String?  @map("project_id")
+  userId        String?  @map("user_id")
+  modelId       String?  @map("model_id")
+  inputPayload  Json     @map("input_payload")
+  outputPayload Json?    @map("output_payload")
+  success       Boolean  @default(false)
+  runtimeMs     Int?     @map("runtime_ms")
+  costUsd       Decimal? @map("cost_usd") @db.Decimal(10, 6)
+  confidence    Decimal? @db.Decimal(3, 2)
+  provenance    Json     @default("{}")
+  errorMessage  String?  @map("error_message") @db.Text
+  traceId       String?  @map("trace_id")
+  spanId        String?  @map("span_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  project  Project?   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user     User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  model    Model?     @relation(fields: [modelId], references: [id], onDelete: SetNull)
+  feedback Feedback[]
+
+  @@index([projectId])
+  @@index([userId])
+  @@index([modelId])
+  @@index([success])
+  @@index([traceId])
+  @@index([createdAt(sort: Desc)])
+  @@map("model_runs")
+}
+
+model Feedback {
+  id         String   @id @default(uuid())
+  modelRunId String   @map("model_run_id")
+  userId     String?  @map("user_id")
+  rating     Int?
+  comment    String?  @db.Text
+  correction Json?
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  modelRun ModelRun @relation(fields: [modelRunId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([modelRunId])
+  @@index([userId])
+  @@index([rating])
+  @@map("feedback")
+}
+
+model ModelMetrics {
+  id               String   @id @default(uuid())
+  modelId          String   @map("model_id")
+  window           String
+  successRate      Decimal  @default(0) @map("success_rate") @db.Decimal(5, 4)
+  correctionRate   Decimal  @default(0) @map("correction_rate") @db.Decimal(5, 4)
+  avgConfidence    Decimal  @default(0) @map("avg_confidence") @db.Decimal(5, 4)
+  meanTimeToFixMs  Int      @default(0) @map("mean_time_to_fix_ms")
+  costPerRun       Decimal  @default(0) @map("cost_per_run") @db.Decimal(10, 6)
+  totalRuns        Int      @default(0) @map("total_runs")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  model Model @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@unique([modelId, window])
+  @@index([modelId, window])
+  @@index([createdAt])
+  @@map("model_metrics")
+}
+
+model TelemetryEvent {
+  id        String   @id @default(uuid())
+  projectId String?  @map("project_id")
+  userId    String?  @map("user_id")
+  eventType String   @map("event_type")
+  payload   Json     @default("{}")
+  sessionId String?  @map("session_id")
+  traceId   String?  @map("trace_id")
+  spanId    String?  @map("span_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([projectId])
+  @@index([userId])
+  @@index([eventType])
+  @@index([sessionId])
+  @@index([traceId])
+  @@index([createdAt(sort: Desc)])
+  @@map("telemetry_events")
+}
+
+model UsageCounter {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  period    String
+  prompts   Int      @default(0)
+  e2eRuns   Int      @default(0) @map("e2e_runs")
+  bytesOut  BigInt   @default(0) @map("bytes_out")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, period])
+  @@index([userId])
+  @@index([period])
+  @@index([createdAt])
+  @@map("usage_counters")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String?  @map("user_id")
+  action      String
+  resource    String?
+  resourceId  String?  @map("resource_id")
+  details     Json     @default("{}")
+  metadata    Json     @default("{}")
+  ipAddress   String?  @map("ip_address")
+  userAgent   String?  @map("user_agent")
+  traceId     String?  @map("trace_id")
+  spanId      String?  @map("span_id")
+  severity    String   @default("info")
+  outcome     String   @default("success")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([resource])
+  @@index([resourceId])
+  @@index([severity])
+  @@index([outcome])
+  @@index([traceId])
+  @@index([createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+model Secret {
+  id           String   @id @default(uuid())
+  name         String   @unique
+  valueEncrypted String @map("value_encrypted") @db.Text
+  maskedValue  String   @map("masked_value")
+  provider     String?
+  description  String?  @db.Text
+  createdBy    String   @map("created_by")
+  lastUsedAt   DateTime? @map("last_used_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  creator User @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+
+  @@index([name])
+  @@index([provider])
+  @@index([createdBy])
+  @@index([createdAt(sort: Desc)])
+  @@map("secrets")
+}
+
+model PlatformSetting {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       String   @db.Text
+  type        String   @default("string")
+  description String?  @db.Text
+  category    String   @default("general")
+  isPublic    Boolean  @default(false) @map("is_public")
+  createdBy   String   @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  creator User @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+
+  @@index([key])
+  @@index([category])
+  @@index([isPublic])
+  @@index([createdBy])
+  @@map("platform_settings")
+}
+
+model FeatureFlag {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  enabled     Boolean  @default(false)
+  rolloutPercentage Int @default(0) @map("rollout_percentage")
+  description String?  @db.Text
+  conditions  Json     @default("{}")
+  createdBy   String   @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  creator User @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+
+  @@index([name])
+  @@index([enabled])
+  @@index([createdBy])
+  @@map("feature_flags")
+}
+
+model AdminSetting {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       Json
+  type        String   @default("json")
+  category    String   @default("stack_rules")
+  description String?  @db.Text
+  isActive    Boolean  @default(true) @map("is_active")
+  priority    Int      @default(0)
+  conditions  Json     @default("{}")
+  createdBy   String   @map("created_by")
+  updatedBy   String?  @map("updated_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  creator User @relation("AdminSettingCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+  updater User? @relation("AdminSettingUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  @@index([key])
+  @@index([category])
+  @@index([isActive])
+  @@index([priority])
+  @@index([createdBy])
+  @@map("admin_settings")
+}
+
+model Workspace {
+  id          String   @id @default(uuid())
+  name        String
+  description String?  @db.Text
+  ownerId     String   @map("owner_id")
+  slug        String?  @unique
+  settings    Json     @default("{}")
+  metadata    Json     @default("{}")
+  isPublic    Boolean  @default(false) @map("is_public")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  owner    User              @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members  WorkspaceMember[]
+  projects Project[]
+  activityLogs ActivityLog[]
+  pluginExecutions PluginExecution[] @relation("PluginExecutionWorkspace")
+
+  @@index([ownerId])
+  @@index([slug])
+  @@index([isPublic])
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String   @id @default(uuid())
+  workspaceId String   @map("workspace_id")
+  userId      String   @map("user_id")
+  role        String   @default("member")
+  permissions Json     @default("{}")
+  invitedBy   String?  @map("invited_by")
+  invitedAt   DateTime? @map("invited_at")
+  joinedAt    DateTime? @map("joined_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([workspaceId])
+  @@index([userId])
+  @@index([role])
+  @@map("workspace_members")
+}
+
+model ActivityLog {
+  id          String   @id @default(uuid())
+  workspaceId String?  @map("workspace_id")
+  projectId   String?  @map("project_id")
+  userId      String   @map("user_id")
+  action      String
+  target      String?
+  targetId    String?  @map("target_id")
+  metadata    Json     @default("{}")
+  changes     Json?
+  ipAddress   String?  @map("ip_address")
+  userAgent   String?  @map("user_agent")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project?   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt(sort: Desc)])
+  @@map("activity_logs")
+}
+
+model Comment {
+  id         String   @id @default(uuid())
+  projectId  String   @map("project_id")
+  userId     String   @map("user_id")
+  content    String   @db.Text
+  filePath   String?  @map("file_path")
+  lineNumber Int?     @map("line_number")
+  startLine  Int?     @map("start_line")
+  endLine    Int?     @map("end_line")
+  position   Json?
+  parentId   String?  @map("parent_id")
+  isResolved Boolean  @default(false) @map("is_resolved")
+  resolvedBy String?  @map("resolved_by")
+  resolvedAt DateTime? @map("resolved_at")
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  project Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent  Comment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies Comment[] @relation("CommentReplies")
+
+  @@index([projectId])
+  @@index([userId])
+  @@index([filePath])
+  @@index([lineNumber])
+  @@index([parentId])
+  @@index([isResolved])
+  @@index([createdAt(sort: Desc)])
+  @@map("comments")
+}
+
+model Template {
+  id          String   @id @default(uuid())
+  name        String
+  description String?  @db.Text
+  category    String
+  tags        String[]
+  config      Json
+  files       Json
+  dependencies Json   @default("[]")
+  isPublic    Boolean  @default(true) @map("is_public")
+  isOfficial  Boolean  @default(false) @map("is_official")
+  downloads   Int      @default(0)
+  rating      Decimal? @db.Decimal(3, 2)
+  createdBy   String   @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  creator User @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+
+  @@index([category])
+  @@index([isPublic])
+  @@index([isOfficial])
+  @@index([createdBy])
+  @@index([downloads(sort: Desc)])
+  @@index([rating(sort: Desc)])
+  @@map("templates")
+}
+
+model CustomTemplate {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  name        String
+  description String?  @db.Text
+  manifest    Json
+  category    String?
+  tags        String[]
+  isPublic    Boolean  @default(false) @map("is_public")
+  usageCount  Int      @default(0) @map("usage_count")
+  sourceProjectId String? @map("source_project_id")
+  parentTemplateId String? @map("parent_template_id")
+  version     String   @default("1.0.0")
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceProject Project? @relation("CustomTemplateSource", fields: [sourceProjectId], references: [id], onDelete: SetNull)
+  parentTemplate CustomTemplate? @relation("TemplateDerivation", fields: [parentTemplateId], references: [id], onDelete: SetNull)
+  derivedTemplates CustomTemplate[] @relation("TemplateDerivation")
+
+  @@index([userId])
+  @@index([category])
+  @@index([isPublic])
+  @@index([usageCount(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@index([sourceProjectId])
+  @@map("custom_templates")
+}
+
+model ProjectCorrection {
+  id              String   @id @default(uuid())
+  projectId       String   @map("project_id")
+  userId          String   @map("user_id")
+  filePath        String   @map("file_path")
+  originalContent String   @db.Text @map("original_content")
+  correctedContent String  @db.Text @map("corrected_content")
+  correctionType  String   @map("correction_type")
+  confidence      Float
+  description     String?  @db.Text
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([projectId])
+  @@index([correctionType])
+  @@index([createdAt(sort: Desc)])
+  @@map("project_corrections")
+}
+
+model TemplateUpdateQueue {
+  id             String   @id @default(uuid())
+  templateId     String   @map("template_id")
+  correctionData Json     @map("correction_data")
+  priority       String   @default("medium")
+  status         String   @default("pending")
+  scheduledFor   DateTime @map("scheduled_for")
+  processedAt    DateTime? @map("processed_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([templateId])
+  @@index([status])
+  @@index([scheduledFor])
+  @@index([priority])
+  @@map("template_update_queue")
+}
+
+model Plugin {
+  id              String   @id @default(uuid())
+  name            String   @unique
+  displayName     String   @map("display_name")
+  version         String
+  description     String   @db.Text
+  author          String
+  category        String
+  manifest        Json
+  config          Json     @default("{}")
+  enabled         Boolean  @default(false)
+  installedBy     String   @map("installed_by")
+  source          String   @default("local")
+  sourceUrl       String?  @map("source_url")
+  installedAt     DateTime @default(now()) @map("installed_at")
+  lastUsed        DateTime? @map("last_used")
+  executions      Int      @default(0)
+  avgExecutionTime Float   @default(0) @map("avg_execution_time")
+  errorRate       Float    @default(0) @map("error_rate")
+  healthStatus    String   @default("unknown") @map("health_status")
+  healthCheckedAt DateTime? @map("health_checked_at")
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  installer User @relation("PluginInstaller", fields: [installedBy], references: [id], onDelete: Cascade)
+  executionHistory PluginExecution[]
+
+  @@index([name])
+  @@index([enabled])
+  @@index([category])
+  @@index([installedBy])
+  @@index([healthStatus])
+  @@map("plugins")
+}
+
+model PluginExecution {
+  id            String   @id @default(uuid())
+  pluginId      String   @map("plugin_id")
+  userId        String   @map("user_id")
+  projectId     String?  @map("project_id")
+  workspaceId   String?  @map("workspace_id")
+  sessionId     String   @map("session_id")
+  traceId       String?  @map("trace_id")
+  input         Json
+  output        Json?
+  config        Json     @default("{}")
+  status        String   @default("pending")
+  startedAt     DateTime @default(now()) @map("started_at")
+  completedAt   DateTime? @map("completed_at")
+  executionTime Int?     @map("execution_time")
+  memoryUsed    Int?     @map("memory_used")
+  tokensUsed    Int?     @map("tokens_used")
+  cost          Float?
+  error         Json?
+  logs          Json     @default("[]")
+  metadata      Json     @default("{}")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  plugin    Plugin    @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  user      User      @relation("PluginExecutionUser", fields: [userId], references: [id], onDelete: Cascade)
+  project   Project?  @relation("PluginExecutionProject", fields: [projectId], references: [id], onDelete: SetNull)
+  workspace Workspace? @relation("PluginExecutionWorkspace", fields: [workspaceId], references: [id], onDelete: SetNull)
+
+  @@index([pluginId])
+  @@index([userId])
+  @@index([projectId])
+  @@index([status])
+  @@index([startedAt])
+  @@index([sessionId])
+  @@index([traceId])
+  @@map("plugin_executions")
+}
+
+model SSOProvider {
+  id              String   @id @default(uuid())
+  organizationId  String   @map("organization_id")
+  type            String   // 'saml' or 'oidc'
+  name            String
+  domain          String
+  enabled         Boolean  @default(true)
+  configuration   Json
+  metadata        Json     @default("{}")
+  configuredBy    String   @map("configured_by")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  configuredByUser User @relation("SSOProviderConfigurer", fields: [configuredBy], references: [id], onDelete: Cascade)
+  userMappings SSOUserMapping[]
+
+  @@index([organizationId])
+  @@index([type])
+  @@index([enabled])
+  @@index([domain])
+  @@map("sso_providers")
+}
+
+model SSOUserMapping {
+  id              String   @id @default(uuid())
+  userId          String   @map("user_id")
+  ssoProviderId   String   @map("sso_provider_id")
+  externalId      String   @map("external_id")
+  attributes      Json     @default("{}")
+  lastLogin       DateTime @default(now()) @map("last_login")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ssoProvider SSOProvider @relation(fields: [ssoProviderId], references: [id], onDelete: Cascade)
+
+  @@unique([ssoProviderId, externalId], map: "providerId_externalId")
+  @@index([userId])
+  @@index([ssoProviderId])
+  @@index([lastLogin])
+  @@map("sso_user_mappings")
+}
+
+model OrganizationSSOSettings {
+  id                String   @id @default(uuid())
+  organizationId    String   @unique @map("organization_id")
+  enforceSSO        Boolean  @default(false) @map("enforce_sso")
+  allowedDomains    String[] @map("allowed_domains")
+  defaultRole       String   @default("user") @map("default_role")
+  autoProvision     Boolean  @default(true) @map("auto_provision")
+  attributeMapping  Json     @default("{}") @map("attribute_mapping")
+  sessionSettings   Json     @default("{}") @map("session_settings")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@index([organizationId])
+  @@map("organization_sso_settings")
+}
+
+model DataExportJob {
+  id                String   @id @default(uuid())
+  organizationId    String   @map("organization_id")
+  type              String   // 'snowflake', 'bigquery', 'manual'
+  destination       String
+  status            String   @default("pending")
+  configuration     Json
+  dataRange         Json     @map("data_range")
+  exportedRecords   Int      @default(0) @map("exported_records")
+  fileSize          BigInt?  @map("file_size")
+  filePath          String?  @map("file_path")
+  errorMessage      String?  @map("error_message")
+  startedAt         DateTime? @map("started_at")
+  completedAt       DateTime? @map("completed_at")
+  createdBy         String   @map("created_by")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  creator User @relation("DataExportJobCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([type])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+  @@map("data_export_jobs")
+}
+
+model ComplianceRule {
+  id              String   @id @default(uuid())
+  organizationId  String   @map("organization_id")
+  type            String   // 'data_retention', 'audit_log', 'access_control'
+  name            String
+  description     String   @db.Text
+  configuration   Json
+  enabled         Boolean  @default(true)
+  severity        String   @default("medium")
+  lastChecked     DateTime? @map("last_checked")
+  violations      Int      @default(0)
+  createdBy       String   @map("created_by")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  creator User @relation("ComplianceRuleCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([type])
+  @@index([enabled])
+  @@index([lastChecked])
+  @@map("compliance_rules")
+}
+
+// Evolution System Models
+
+model CodeAnalysisResult {
+  id              String   @id @default(uuid())
+  analysisType    String   @map("analysis_type") // 'performance', 'security', 'style', 'complexity'
+  findings        Json
+  metrics         Json
+  suggestions     Json
+  confidence      Float
+  severity        String
+  metadata        Json     @default("{}")
+  analyzedAt      DateTime @map("analyzed_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([analysisType])
+  @@index([analyzedAt(sort: Desc)])
+  @@index([severity])
+  @@map("code_analysis_results")
+}
+
+model RefactorSuggestion {
+  id                String   @id @default(uuid())
+  analysisId        String   @map("analysis_id")
+  type              String   // 'extract_method', 'reduce_complexity', 'optimize_query', etc.
+  priority          String   // 'low', 'medium', 'high', 'critical'
+  title             String
+  description       String   @db.Text
+  files             String[]
+  estimatedImpact   Json     @map("estimated_impact")
+  automationLevel   String   @map("automation_level") // 'manual', 'assisted', 'automatic'
+  implementation    Json
+  confidence        Float
+  reasoning         String   @db.Text
+  status            String   @default("pending") // 'pending', 'approved', 'rejected', 'applied'
+  metadata          Json     @default("{}")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  feedback   RefactorFeedback[]
+  executions RefactorExecution[]
+
+  @@index([analysisId])
+  @@index([type])
+  @@index([priority])
+  @@index([status])
+  @@index([automationLevel])
+  @@index([confidence])
+  @@index([createdAt(sort: Desc)])
+  @@map("refactor_suggestions")
+}
+
+model RefactorFeedback {
+  id                      String    @id @default(uuid())
+  suggestionId            String    @map("suggestion_id")
+  userId                  String    @map("user_id")
+  action                  String    // 'approved', 'rejected', 'modified', 'deferred'
+  rating                  Int       // 1-5 scale
+  comments                String?   @db.Text
+  modifiedImplementation  Json?     @map("modified_implementation")
+  appliedAt               DateTime? @map("applied_at")
+  reviewedBy              String?   @map("reviewed_by")
+  metadata                Json      @default("{}")
+  createdAt               DateTime  @default(now()) @map("created_at")
+
+  suggestion RefactorSuggestion @relation(fields: [suggestionId], references: [id], onDelete: Cascade)
+  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([suggestionId])
+  @@index([userId])
+  @@index([action])
+  @@index([rating])
+  @@index([createdAt(sort: Desc)])
+  @@map("refactor_feedback")
+}
+
+model RefactorExecution {
+  id             String    @id @default(uuid())
+  suggestionId   String    @map("suggestion_id")
+  status         String    // 'pending', 'in_progress', 'completed', 'failed', 'rolled_back'
+  startedAt      DateTime  @map("started_at")
+  completedAt    DateTime? @map("completed_at")
+  executedBy     String    @map("executed_by") // 'system' or userId
+  changes        Json
+  backupPath     String?   @map("backup_path")
+  testResults    Json      @map("test_results")
+  rollbackPlan   String    @map("rollback_plan") @db.Text
+  metadata       Json      @default("{}")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  suggestion RefactorSuggestion @relation(fields: [suggestionId], references: [id], onDelete: Cascade)
+  executor   User               @relation(fields: [executedBy], references: [id], onDelete: Cascade)
+
+  @@index([suggestionId])
+  @@index([status])
+  @@index([executedBy])
+  @@index([startedAt(sort: Desc)])
+  @@map("refactor_executions")
+}
+
+model CanaryModel {
+  id                    String    @id @default(uuid())
+  name                  String
+  version               String
+  modelType             String    @map("model_type") // 'language', 'embedding', 'classification', 'completion'
+  configuration         Json
+  status                String    // 'pending', 'testing', 'active', 'promoted', 'failed', 'rolled_back'
+  trafficPercentage     Int       @map("traffic_percentage")
+  testingStartedAt      DateTime? @map("testing_started_at")
+  promotedAt            DateTime? @map("promoted_at")
+  metrics               Json
+  comparisonBaseline    String    @map("comparison_baseline")
+  promotionCriteria     Json      @map("promotion_criteria")
+  metadata              Json      @default("{}")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  deployments CanaryDeployment[]
+  comparisons ModelComparison[]  @relation("CanaryComparisons")
+  baselineFor ModelComparison[]  @relation("BaselineComparisons")
+
+  @@index([name])
+  @@index([modelType])
+  @@index([status])
+  @@index([trafficPercentage])
+  @@index([testingStartedAt])
+  @@index([createdAt(sort: Desc)])
+  @@map("canary_models")
+}
+
+model CanaryDeployment {
+  id                 String    @id @default(uuid())
+  canaryId           String    @map("canary_id")
+  deploymentStrategy String    @map("deployment_strategy") // 'blue_green', 'rolling', 'canary'
+  trafficSplit       Json      @map("traffic_split")
+  status             String    // 'deploying', 'active', 'completed', 'failed'
+  startedAt          DateTime  @map("started_at")
+  completedAt        DateTime? @map("completed_at")
+  rollbackPlan       Json      @map("rollback_plan")
+  monitoring         Json
+  metadata           Json      @default("{}")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  canary CanaryModel @relation(fields: [canaryId], references: [id], onDelete: Cascade)
+
+  @@index([canaryId])
+  @@index([status])
+  @@index([startedAt(sort: Desc)])
+  @@map("canary_deployments")
+}
+
+model ModelComparison {
+  id               String   @id @default(uuid())
+  canaryId         String   @map("canary_id")
+  baselineId       String   @map("baseline_id")
+  comparisonPeriod Json     @map("comparison_period")
+  results          Json
+  recommendation   String   // 'promote', 'continue_testing', 'rollback', 'manual_review'
+  confidence       Float
+  reasoning        String[] @db.Text
+  metadata         Json     @default("{}")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  canary   CanaryModel @relation("CanaryComparisons", fields: [canaryId], references: [id], onDelete: Cascade)
+  baseline CanaryModel @relation("BaselineComparisons", fields: [baselineId], references: [id], onDelete: Cascade)
+
+  @@index([canaryId])
+  @@index([baselineId])
+  @@index([recommendation])
+  @@index([confidence])
+  @@index([createdAt(sort: Desc)])
+  @@map("model_comparisons")
+}
+
+model EvolutionSettings {
+  id             String   @id @default(uuid())
+  organizationId String   @unique @map("organization_id")
+  enabled        Boolean  @default(false)
+  features       Json
+  safeguards     Json
+  metadata       Json     @default("{}")
+  lastModifiedBy String   @map("last_modified_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([organizationId])
+  @@index([enabled])
+  @@map("evolution_settings")
+}
+
+model EvolutionMetrics {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  period         Json
+  codeAnalysis   Json     @map("code_analysis")
+  refactoring    Json
+  canaryTesting  Json     @map("canary_testing")
+  impact         Json
+  risks          Json
+  metadata       Json     @default("{}")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId])
+  @@index([createdAt(sort: Desc)])
+  @@map("evolution_metrics")
+}
+
+model EvolutionEvent {
+  id             String    @id @default(uuid())
+  organizationId String    @map("organization_id")
+  type           String    // 'analysis_started', 'analysis_completed', 'refactor_suggested', etc.
+  severity       String    // 'info', 'warning', 'error', 'critical'
+  title          String
+  description    String    @db.Text
+  data           Json
+  triggeredBy    String    @map("triggered_by") // 'system' or userId
+  acknowledgedAt DateTime? @map("acknowledged_at")
+  acknowledgedBy String?   @map("acknowledged_by")
+  metadata       Json      @default("{}")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [triggeredBy], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([type])
+  @@index([severity])
+  @@index([triggeredBy])
+  @@index([acknowledgedAt])
+  @@index([createdAt(sort: Desc)])
+  @@map("evolution_events")
+}

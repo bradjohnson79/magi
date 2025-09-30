@@ -1,0 +1,206 @@
+# Serena Security Scanning Configuration for Magi Platform
+version: "1.0"
+
+# Scan settings
+scan:
+  name: "magi-security-scan"
+  description: "Comprehensive security scan for Magi AI platform"
+  timeout: 300 # 5 minutes
+
+  # Paths to scan
+  paths:
+    include:
+      - "app/"
+      - "components/"
+      - "lib/"
+      - "services/"
+      - "prisma/"
+      - "*.ts"
+      - "*.tsx"
+      - "*.js"
+      - "*.jsx"
+      - "*.json"
+      - "*.yml"
+      - "*.yaml"
+      - "Dockerfile*"
+      - "docker-compose*.yml"
+    exclude:
+      - "node_modules/"
+      - ".next/"
+      - "dist/"
+      - "build/"
+      - "coverage/"
+      - "test-results/"
+      - "playwright-report/"
+      - "*.test.*"
+      - "*.spec.*"
+
+# Security policy profile
+policy:
+  profile: "strict"
+
+  # Severity thresholds
+  thresholds:
+    high:
+      action: "fail"
+      max_findings: 0
+    medium:
+      action: "warn"
+      max_findings: 10
+    low:
+      action: "info"
+      max_findings: 50
+    info:
+      action: "ignore"
+
+# Rule categories to enable
+rules:
+  categories:
+    - "injection"
+    - "authentication"
+    - "authorization"
+    - "crypto"
+    - "secrets"
+    - "xss"
+    - "sqli"
+    - "ssrf"
+    - "path-traversal"
+    - "command-injection"
+    - "code-injection"
+    - "deserialization"
+    - "xml"
+    - "csrf"
+    - "cors"
+    - "headers"
+    - "cookies"
+    - "session"
+    - "privacy"
+    - "compliance"
+
+  # Custom rules
+  custom:
+    - id: "magi-hardcoded-secrets"
+      name: "Hardcoded Secrets Detection"
+      description: "Detect hardcoded API keys, tokens, and credentials"
+      severity: "high"
+      pattern: |
+        (sk-[a-zA-Z0-9]{32,}|pk_[a-zA-Z0-9]{32,}|rk_[a-zA-Z0-9]{32,})
+      files: ["**/*.ts", "**/*.js", "**/*.tsx", "**/*.jsx"]
+
+    - id: "magi-unsafe-eval"
+      name: "Unsafe Code Evaluation"
+      description: "Detect potentially unsafe code evaluation"
+      severity: "high"
+      pattern: |
+        (eval\s*\(|new\s+Function\s*\(|setTimeout\s*\(\s*['\"`])
+      files: ["**/*.ts", "**/*.js", "**/*.tsx", "**/*.jsx"]
+
+    - id: "magi-sql-injection"
+      name: "SQL Injection Patterns"
+      description: "Detect potential SQL injection vulnerabilities"
+      severity: "high"
+      pattern: |
+        (\$\{.*\}.*SELECT|SELECT.*\$\{.*\}|query.*\+.*req\.|execute.*\+.*params)
+      files: ["**/*.ts", "**/*.js"]
+
+    - id: "magi-prompt-injection"
+      name: "AI Prompt Injection"
+      description: "Detect potential prompt injection patterns"
+      severity: "medium"
+      pattern: |
+        (ignore.*previous.*instruction|system.*override|act.*as.*admin)
+      files: ["**/*.ts", "**/*.js", "**/*.tsx", "**/*.jsx"]
+
+# Output configuration
+output:
+  format: "json"
+  file: "serena-results.json"
+  console: true
+  annotations: true
+
+  # Include in output
+  include:
+    - "metadata"
+    - "source_code"
+    - "recommendations"
+    - "cwe_mapping"
+    - "owasp_mapping"
+
+# Integration settings
+integrations:
+  github:
+    enabled: true
+    pr_comments: true
+    check_runs: true
+
+  slack:
+    enabled: false
+    webhook_url: ""
+
+  email:
+    enabled: false
+
+# AI-specific security checks
+ai_security:
+  enabled: true
+
+  # LLM-specific vulnerabilities
+  llm_checks:
+    - "prompt_injection"
+    - "data_leakage"
+    - "model_theft"
+    - "training_data_poisoning"
+    - "insecure_output_handling"
+    - "overreliance"
+    - "inadequate_ai_alignment"
+    - "insufficient_access_controls"
+
+  # Data privacy checks
+  privacy_checks:
+    - "pii_exposure"
+    - "sensitive_data_in_prompts"
+    - "inadequate_data_sanitization"
+    - "cross_tenant_data_leakage"
+
+# Performance settings
+performance:
+  parallel_scans: 4
+  memory_limit: "2GB"
+  cache_enabled: true
+  cache_ttl: 3600 # 1 hour
+
+# Reporting
+reports:
+  dashboard:
+    enabled: true
+    url: "https://serena.dashboard.local"
+
+  metrics:
+    enabled: true
+    track_trends: true
+    retention_days: 90
+
+  compliance:
+    frameworks:
+      - "OWASP"
+      - "CWE"
+      - "SOC2"
+      - "GDPR"
+      - "PCI-DSS"
+
+# Environment-specific settings
+environments:
+  development:
+    policy_profile: "relaxed"
+    high_threshold: 5
+    medium_threshold: 20
+
+  staging:
+    policy_profile: "standard"
+    high_threshold: 1
+    medium_threshold: 10
+
+  production:
+    policy_profile: "strict"
+    high_threshold: 0
+    medium_threshold: 5
